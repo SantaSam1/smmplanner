@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { Clock, Send, Save, Sparkles, X, CheckSquare, Square, AlertCircle, Loader2, CheckCircle, XCircle, Upload, Link, Film } from 'lucide-react';
+import { Clock, Send, Save, Sparkles, X, CheckSquare, Square, AlertCircle, Loader2, CheckCircle, XCircle, Upload, Link } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -9,7 +9,9 @@ import { Page } from '../types';
 
 interface ComposeProps { onNavigate: (page: Page) => void; }
 
-const ALL_PLATFORMS: Platform[] = ['instagram','facebook','twitter','linkedin','tiktok','youtube','telegram','vk','ok'];
+// YouTube отключён из публикации — требует прямой загрузки файла через API
+const ALL_PLATFORMS: Platform[] = ['instagram','facebook','twitter','linkedin','tiktok','telegram','vk','ok'];
+const INFO_ONLY_PLATFORMS: Platform[] = ['youtube']; // только для информации
 
 function toDirectUrl(url: string) {
   const m = url.match(/drive\.google\.com\/file\/d\/([^/]+)/);
@@ -53,7 +55,7 @@ export default function Compose({ onNavigate }: ComposeProps) {
   const [showResults, setShowResults] = useState(false);
 
   const charLimit = selectedPlatforms.includes('twitter') ? 280 : selectedPlatforms.includes('telegram') ? 4096 : 2200;
-  const hasYoutube = selectedPlatforms.includes('youtube');
+
 
   useEffect(() => {
     if (!user) return;
@@ -135,10 +137,7 @@ export default function Compose({ onNavigate }: ComposeProps) {
     if (!content.trim()) { setError(c.contentRequired); return; }
     if (selectedPlatforms.length === 0) { setError(c.platformRequired); return; }
     if (selectedAccountIds.length === 0) { setError(c.accountRequired); return; }
-    if (hasYoutube && !videoUrl) {
-      setError(ru ? 'Для YouTube укажите ссылку на видео' : 'For YouTube, provide a video URL');
-      return;
-    }
+
 
     setPublishing(true); setError('');
     const allMedia = videoUrl ? [...mediaUrls, videoUrl] : mediaUrls;
@@ -311,30 +310,7 @@ export default function Compose({ onNavigate }: ComposeProps) {
               </button>
             </div>
 
-            {/* YouTube video URL */}
-            {hasYoutube && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <Film className="w-4 h-4 text-red-600" />
-                  <span className="text-sm font-semibold text-red-700">
-                    {ru ? 'YouTube — ссылка на видео' : 'YouTube — video URL'}
-                  </span>
-                  <span className="text-xs text-red-500">*{ru?'обязательно':'required'}</span>
-                </div>
-                <input
-                  type="url"
-                  value={videoUrl}
-                  onChange={e => setVideoUrl(e.target.value)}
-                  placeholder="https://www.youtube.com/watch?v=... или https://youtu.be/..."
-                  className="w-full text-sm px-3 py-2 border border-red-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-400 bg-white"
-                />
-                <p className="text-xs text-red-500 mt-1">
-                  {ru
-                    ? 'YouTube API требует прямую ссылку на видеофайл или YouTube URL для публикации'
-                    : 'YouTube API requires a direct video file URL or YouTube URL to publish'}
-                </p>
-              </div>
-            )}
+
 
             {/* Media preview */}
             {mediaUrls.length > 0 && (
