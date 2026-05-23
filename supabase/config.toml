@@ -1,0 +1,8 @@
+[functions.oauth-callback]
+verify_jwt = false
+
+[functions.test-account]
+verify_jwt = false
+
+[functions.publish-post]
+verify_jwt = true
