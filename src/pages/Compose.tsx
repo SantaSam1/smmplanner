@@ -9,9 +9,7 @@ import { Page } from '../types';
 
 interface ComposeProps { onNavigate: (page: Page) => void; }
 
-// YouTube отключён из публикации — требует прямой загрузки файла через API
-const ALL_PLATFORMS: Platform[] = ['instagram','facebook','twitter','linkedin','tiktok','telegram','vk','ok'];
-const INFO_ONLY_PLATFORMS: Platform[] = ['youtube']; // только для информации
+const ALL_PLATFORMS: Platform[] = ['instagram','facebook','twitter','linkedin','tiktok','youtube','telegram','vk','ok'];
 
 function toDirectUrl(url: string) {
   const m = url.match(/drive\.google\.com\/file\/d\/([^/]+)/);

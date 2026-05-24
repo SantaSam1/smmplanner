@@ -1,10 +1,6 @@
 // @ts-nocheck
+// verify_jwt = false — см. supabase/config.toml
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
-
-// ─── ВАЖНО: эта функция не требует JWT (принимает redirect от Google/Meta) ──
-// Добавьте в supabase/config.toml:
-// [functions.oauth-callback]
-// verify_jwt = false
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200 });
@@ -17,7 +13,8 @@ Deno.serve(async (req) => {
 
   const META_APP_ID     = Deno.env.get("META_APP_ID")     || "";
   const META_APP_SECRET = Deno.env.get("META_APP_SECRET") || "";
-  const CALLBACK_URL    = (Deno.env.get("CALLBACK_URL") || Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
+  const SUPABASE_URL    = Deno.env.get("SUPABASE_URL")    || "";
+  const CALLBACK_URL    = (Deno.env.get("CALLBACK_URL") || SUPABASE_URL).replace(/\/$/, "");
 
   let stateData: any = {};
   try { if (state) stateData = JSON.parse(atob(state)); } catch {}
@@ -27,16 +24,93 @@ Deno.serve(async (req) => {
     new Response(null, { status: 302, headers: { Location: redirectUrl + path } });
 
   if (oauthError) return go(`?error=${encodeURIComponent(oauthError)}&error_desc=${encodeURIComponent(errorDesc)}`);
-  if (!code || !userId)  return go("?error=Missing+code+or+user");
+  if (!code)      return go("?error=Missing+authorization+code");
+  if (!userId)    return go("?error=Missing+user+ID+in+state");
 
   const callbackUri = `${CALLBACK_URL}/functions/v1/oauth-callback`;
 
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL") || "",
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || ""
-  );
+  const supabase = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "");
 
   try {
+    // ── ODNOKLASSNIKI (OK.ru) ─────────────────────────────────
+    if (platform === "ok") {
+      const OK_APP_KEY    = Deno.env.get("OK_APP_KEY")    || "";
+      const OK_APP_SECRET = Deno.env.get("OK_APP_SECRET") || "";
+      const OK_PUBLIC_KEY = Deno.env.get("OK_PUBLIC_KEY") || "";
+
+      if (!OK_APP_KEY || !OK_APP_SECRET) {
+        return go("?error=OK.ru+credentials+not+configured+in+Supabase+Secrets+(OK_APP_KEY,+OK_APP_SECRET)");
+      }
+
+      // Exchange code for access_token
+      const tokenRes = await fetch("https://api.ok.ru/oauth/token.do", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id:     OK_APP_KEY,
+          client_secret: OK_APP_SECRET,
+          redirect_uri:  callbackUri,
+          grant_type:    "authorization_code",
+        }),
+      });
+      const tokenData = await tokenRes.json() as any;
+      console.log("OK.ru token response:", JSON.stringify(tokenData));
+
+      if (!tokenData.access_token) {
+        const err = tokenData.error_description || tokenData.error || JSON.stringify(tokenData);
+        return go(`?error=OK.ru+token+error&error_desc=${encodeURIComponent(err)}`);
+      }
+
+      const accessToken = tokenData.access_token;
+      const refreshToken = tokenData.refresh_token || "";
+
+      // Get user info from OK.ru
+      const { createHash } = await import("node:crypto");
+      const sessionSecretMd5 = createHash("md5").update(accessToken).digest("hex");
+      const sessionSecret = createHash("md5").update(sessionSecretMd5 + OK_APP_SECRET).digest("hex");
+
+      const params: Record<string, string> = {
+        application_key: OK_PUBLIC_KEY,
+        method: "users.getCurrentUser",
+        fields: "uid,name,pic_2",
+      };
+      const sigStr = Object.keys(params).sort().map(k => `${k}=${params[k]}`).join("") + sessionSecret;
+      params.sig = createHash("md5").update(sigStr).digest("hex");
+      params.access_token = accessToken;
+      params.format = "json";
+
+      const userRes = await fetch("https://api.ok.ru/fb.do", {
+        method: "POST",
+        body: new URLSearchParams(params),
+      });
+      const userData = await userRes.json() as any;
+      console.log("OK.ru user:", JSON.stringify(userData));
+
+      const userName = userData.name || "OK.ru пользователь";
+      const userId2  = userData.uid  || "";
+
+      const { error: dbErr } = await supabase.from("social_accounts").insert({
+        user_id:         userId,
+        platform:        "ok",
+        account_id:      userId2,
+        account_name:    userName,
+        account_handle:  userId2,
+        access_token:    accessToken,
+        refresh_token:   refreshToken,
+        credentials:     { access_token: accessToken, public_key: OK_PUBLIC_KEY, app_secret: OK_APP_SECRET },
+        is_active:       true,
+        followers_count: 0,
+      });
+
+      if (dbErr) {
+        console.error("DB error:", dbErr);
+        return go(`?error=DB+error&error_desc=${encodeURIComponent(dbErr.message)}`);
+      }
+
+      return go("?success=true&platform=ok");
+    }
+
     // ── META (Instagram + Facebook) ──────────────────────────
     if (platform === "instagram" || platform === "facebook") {
       if (!META_APP_ID || !META_APP_SECRET)
@@ -49,14 +123,12 @@ Deno.serve(async (req) => {
       });
       const shortData = await shortRes.json() as any;
       if (!shortData.access_token)
-        return go(`?error=Failed+to+get+access+token&error_desc=${encodeURIComponent(shortData.error?.message || JSON.stringify(shortData))}`);
+        return go(`?error=Failed+to+get+Meta+token&error_desc=${encodeURIComponent(shortData.error?.message || JSON.stringify(shortData))}`);
 
-      const llRes = await fetch(`https://graph.facebook.com/v19.0/oauth/access_token?` + new URLSearchParams({ grant_type: "fb_exchange_token", client_id: META_APP_ID, client_secret: META_APP_SECRET, fb_exchange_token: shortData.access_token }));
+      const llRes  = await fetch(`https://graph.facebook.com/v19.0/oauth/access_token?${new URLSearchParams({ grant_type: "fb_exchange_token", client_id: META_APP_ID, client_secret: META_APP_SECRET, fb_exchange_token: shortData.access_token })}`);
       const llData = await llRes.json() as any;
       const accessToken    = llData.access_token || shortData.access_token;
-      const tokenExpiresAt = llData.expires_in
-        ? new Date(Date.now() + llData.expires_in * 1000).toISOString()
-        : new Date(Date.now() + 60 * 86400000).toISOString();
+      const tokenExpiresAt = llData.expires_in ? new Date(Date.now() + llData.expires_in * 1000).toISOString() : new Date(Date.now() + 60*86400000).toISOString();
 
       if (platform === "facebook") {
         const fbRes  = await fetch(`https://graph.facebook.com/v19.0/me?fields=id,name&access_token=${accessToken}`);
@@ -66,15 +138,16 @@ Deno.serve(async (req) => {
         return go("?success=true&platform=facebook");
       }
 
+      // Instagram: pages → instagram_business_account → profile
       const pagesRes  = await fetch(`https://graph.facebook.com/v19.0/me/accounts?access_token=${accessToken}`);
       const pagesData = await pagesRes.json() as any;
       const page      = pagesData.data?.[0];
-      if (!page) return go("?error=No+Facebook+Page+found.+Link+an+Instagram+Business+account+to+a+Facebook+Page+first");
+      if (!page) return go("?error=No+Facebook+Page+found.+Go+to+Facebook+Page+Settings+%E2%86%92+Linked+Accounts+%E2%86%92+Instagram+and+connect+your+Instagram+Business+account");
 
       const igRes  = await fetch(`https://graph.facebook.com/v19.0/${page.id}?fields=instagram_business_account&access_token=${accessToken}`);
       const igData = await igRes.json() as any;
       const igId   = igData.instagram_business_account?.id;
-      if (!igId) return go("?error=No+Instagram+Business+Account+linked+to+your+Facebook+Page");
+      if (!igId) return go("?error=No+Instagram+Business+Account+linked+to+your+Facebook+Page.+Go+to+Facebook+Page+Settings+%E2%86%92+Instagram");
 
       const igProfileRes = await fetch(`https://graph.facebook.com/v19.0/${igId}?fields=id,username,followers_count,profile_picture_url&access_token=${accessToken}`);
       const igProfile    = await igProfileRes.json() as any;
@@ -90,7 +163,7 @@ Deno.serve(async (req) => {
       const TW_ID  = Deno.env.get("TWITTER_CLIENT_ID")     || "";
       const TW_SEC = Deno.env.get("TWITTER_CLIENT_SECRET") || "";
       if (!TW_ID) return go("?error=Twitter+credentials+not+configured");
-      const tRes = await fetch("https://api.twitter.com/2/oauth2/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", "Authorization": "Basic " + btoa(`${TW_ID}:${TW_SEC}`) }, body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: callbackUri, code_verifier: "challenge" }) });
+      const tRes  = await fetch("https://api.twitter.com/2/oauth2/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", "Authorization": "Basic " + btoa(`${TW_ID}:${TW_SEC}`) }, body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: callbackUri, code_verifier: "challenge" }) });
       const tData = await tRes.json() as any;
       if (!tData.access_token) return go(`?error=Twitter+token+error&error_desc=${encodeURIComponent(tData.error || "")}`);
       const uRes  = await fetch("https://api.twitter.com/2/users/me?user.fields=name,username,public_metrics", { headers: { "Authorization": `Bearer ${tData.access_token}` } });
@@ -104,7 +177,7 @@ Deno.serve(async (req) => {
       const LI_ID  = Deno.env.get("LINKEDIN_CLIENT_ID")     || "";
       const LI_SEC = Deno.env.get("LINKEDIN_CLIENT_SECRET") || "";
       if (!LI_ID) return go("?error=LinkedIn+credentials+not+configured");
-      const tRes = await fetch("https://www.linkedin.com/oauth/v2/accessToken", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: callbackUri, client_id: LI_ID, client_secret: LI_SEC }) });
+      const tRes  = await fetch("https://www.linkedin.com/oauth/v2/accessToken", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: callbackUri, client_id: LI_ID, client_secret: LI_SEC }) });
       const tData = await tRes.json() as any;
       if (!tData.access_token) return go("?error=LinkedIn+token+error");
       const pRes = await fetch("https://api.linkedin.com/v2/userinfo", { headers: { "Authorization": `Bearer ${tData.access_token}` } });
@@ -117,8 +190,8 @@ Deno.serve(async (req) => {
     if (platform === "youtube") {
       const YT_ID  = Deno.env.get("YOUTUBE_CLIENT_ID")     || "";
       const YT_SEC = Deno.env.get("YOUTUBE_CLIENT_SECRET") || "";
-      if (!YT_ID) return go("?error=YouTube+credentials+not+configured+in+Supabase+Secrets");
-      const tRes = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: callbackUri, client_id: YT_ID, client_secret: YT_SEC }) });
+      if (!YT_ID) return go("?error=YouTube+credentials+not+configured");
+      const tRes  = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: callbackUri, client_id: YT_ID, client_secret: YT_SEC }) });
       const tData = await tRes.json() as any;
       if (!tData.access_token) return go(`?error=YouTube+token+error&error_desc=${encodeURIComponent(JSON.stringify(tData))}`);
       const cRes  = await fetch("https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&mine=true", { headers: { "Authorization": `Bearer ${tData.access_token}` } });
@@ -132,14 +205,14 @@ Deno.serve(async (req) => {
       const TT_ID  = Deno.env.get("TIKTOK_CLIENT_KEY")    || "";
       const TT_SEC = Deno.env.get("TIKTOK_CLIENT_SECRET") || "";
       if (!TT_ID) return go("?error=TikTok+credentials+not+configured");
-      const tRes = await fetch("https://open.tiktokapis.com/v2/oauth/token/", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_key: TT_ID, client_secret: TT_SEC, code, grant_type: "authorization_code", redirect_uri: callbackUri }) });
+      const tRes  = await fetch("https://open.tiktokapis.com/v2/oauth/token/", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_key: TT_ID, client_secret: TT_SEC, code, grant_type: "authorization_code", redirect_uri: callbackUri }) });
       const tData = await tRes.json() as any;
       if (!tData.access_token) return go("?error=TikTok+token+error");
       await supabase.from("social_accounts").insert({ user_id: userId, platform: "tiktok", account_id: tData.open_id || "", account_name: "TikTok Account", account_handle: tData.open_id || "", access_token: tData.access_token, refresh_token: tData.refresh_token || "", is_active: true, followers_count: 0 });
       return go("?success=true&platform=tiktok");
     }
 
-    return go(`?error=Unknown+platform+${platform}`);
+    return go(`?error=Unknown+platform:+${platform}`);
 
   } catch (err: any) {
     console.error("oauth-callback error:", err);
