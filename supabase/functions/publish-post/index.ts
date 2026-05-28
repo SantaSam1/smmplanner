@@ -85,10 +85,10 @@ Deno.serve(async (req) => {
 
     // ── VKONTAKTE ─────────────────────────────────────────────
     else if (platform === "vk") {
-      const token   = creds.token    || acc.access_token || "";
-      const groupId = creds.group_id || acc.account_handle || "";
-      if (!token)   throw new Error("VK token отсутствует");
-      if (!groupId) throw new Error("VK group_id отсутствует");
+      const rawId = creds.group_id || acc.account_handle || "";
+const groupId = rawId.replace(/^-?(club)?/i, "").trim();
+const token = creds.token || acc.access_token || "";
+if (!token || !groupId) throw new Error("VK token or group_id missing");
 
       // Ensure groupId is integer (no minus sign for owner_id we add it)
       const gId = String(groupId).replace(/^-/, "");
@@ -246,8 +246,125 @@ Deno.serve(async (req) => {
 
     // ── YOUTUBE ───────────────────────────────────────────────
     else if (platform === "youtube") {
-      ok = false;
-      message = "YouTube video upload requires a file upload flow — not supported for URL-only posts";
+      let accessToken = acc.access_token || "";
+      const refreshToken = acc.refresh_token || "";
+      const ytClientId     = Deno.env.get("YOUTUBE_CLIENT_ID")     || "";
+      const ytClientSecret = Deno.env.get("YOUTUBE_CLIENT_SECRET") || "";
+
+      if (!accessToken && !refreshToken) throw new Error("YouTube: нет токена. Переподключите аккаунт.");
+      if (!ytClientId || !ytClientSecret) throw new Error("YouTube: YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET не настроены в Secrets");
+
+      // ── 1. Refresh access token if needed ──────────────────
+      async function refreshYTToken(): Promise<string> {
+        if (!refreshToken) throw new Error("YouTube: refresh_token отсутствует. Переподключите аккаунт.");
+        const r = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id:     ytClientId,
+            client_secret: ytClientSecret,
+            refresh_token: refreshToken,
+            grant_type:    "refresh_token",
+          }),
+        });
+        const d = await r.json() as any;
+        if (!d.access_token) throw new Error(`YouTube token refresh failed: ${JSON.stringify(d)}`);
+        // Save new access_token to DB
+        await supabase.from("social_accounts").update({ access_token: d.access_token }).eq("id", accountId);
+        return d.access_token;
+      }
+
+      // Test current token, refresh if 401
+      const testRes = await fetch("https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=" + accessToken);
+      if (!testRes.ok) {
+        accessToken = await refreshYTToken();
+      }
+
+      // ── 2. Determine what we're uploading ──────────────────
+      if (!firstMedia) throw new Error("YouTube: нужен URL видео или изображения для загрузки");
+
+      // Detect if it's a video URL
+      const isVideoUrl = /\.(mp4|mov|avi|mkv|webm|flv|m4v)(\?|$)/i.test(firstMedia) ||
+                         firstMedia.includes("video") ||
+                         (payload.videoUrl && payload.videoUrl.trim().length > 0);
+
+      const uploadUrl = payload.videoUrl?.trim() || (isVideoUrl ? firstMedia : null);
+
+      if (!uploadUrl) {
+        throw new Error("YouTube: нужен файл видео (MP4, MOV, etc). Изображения YouTube не поддерживает.");
+      }
+
+      // ── 3. Download the video ──────────────────────────────
+      const videoFetchRes = await fetch(uploadUrl);
+      if (!videoFetchRes.ok) throw new Error(`YouTube: не удалось скачать видео (${videoFetchRes.status}): ${uploadUrl}`);
+      const videoBuffer = await videoFetchRes.arrayBuffer();
+      const videoBytes  = new Uint8Array(videoBuffer);
+      const videoSize   = videoBytes.byteLength;
+      const contentType = videoFetchRes.headers.get("content-type") || "video/mp4";
+
+      if (videoSize > 256 * 1024 * 1024) throw new Error("YouTube: видео больше 256МБ — загрузите через YouTube Studio напрямую");
+
+      // ── 4. Start resumable upload session ─────────────────
+      const title       = content.slice(0, 100) || "Новое видео";
+      const description = content.length > 100 ? content : "";
+
+      const initRes = await fetch(
+        "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+        {
+          method: "POST",
+          headers: {
+            "Authorization":       `Bearer ${accessToken}`,
+            "Content-Type":        "application/json",
+            "X-Upload-Content-Type": contentType,
+            "X-Upload-Content-Length": String(videoSize),
+          },
+          body: JSON.stringify({
+            snippet: {
+              title,
+              description,
+              categoryId: "22", // People & Blogs — can be changed
+            },
+            status: {
+              privacyStatus: "public",
+              selfDeclaredMadeForKids: false,
+            },
+          }),
+        }
+      );
+
+      if (!initRes.ok) {
+        const errText = await initRes.text();
+        // Try refreshing token once if 401
+        if (initRes.status === 401) {
+          accessToken = await refreshYTToken();
+          throw new Error("YouTube: токен обновлён — повторите публикацию");
+        }
+        throw new Error(`YouTube: не удалось инициализировать загрузку (${initRes.status}): ${errText}`);
+      }
+
+      const resumableUri = initRes.headers.get("location");
+      if (!resumableUri) throw new Error("YouTube: не получен resumable upload URI");
+
+      // ── 5. Upload video bytes ──────────────────────────────
+      const uploadRes = await fetch(resumableUri, {
+        method: "PUT",
+        headers: {
+          "Content-Type":   contentType,
+          "Content-Length": String(videoSize),
+        },
+        body: videoBytes,
+      });
+
+      const uploadData = await uploadRes.json() as any;
+
+      if (!uploadRes.ok || uploadData.error) {
+        const errMsg = uploadData.error?.message || uploadData.error?.errors?.[0]?.reason || JSON.stringify(uploadData);
+        throw new Error(`YouTube upload failed: ${errMsg}`);
+      }
+
+      const videoId = uploadData.id;
+      ok = true;
+      message = `YouTube: видео загружено ✅ https://youtu.be/${videoId}`;
     }
 
     else {
