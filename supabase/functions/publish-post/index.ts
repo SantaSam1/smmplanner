@@ -49,27 +49,36 @@ Deno.serve(async (req) => {
       if (!chatId) throw new Error("Channel ID отсутствует");
 
       if (firstMedia) {
-        // Try sendPhoto first, fallback to sendMessage with link
-        const photoRes = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+        // Detect media type by URL extension
+        const isVideo = /\.(mp4|mov|avi|mkv|webm|flv|m4v)(\?|$)/i.test(firstMedia);
+        const isAnim  = /\.gif(\?|$)/i.test(firstMedia);
+
+        let tgMethod: string, tgField: string;
+        if (isVideo) { tgMethod = "sendVideo"; tgField = "video"; }
+        else if (isAnim) { tgMethod = "sendAnimation"; tgField = "animation"; }
+        else { tgMethod = "sendPhoto"; tgField = "photo"; }
+
+        const tgRes = await fetch(`https://api.telegram.org/bot${token}/${tgMethod}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: chatId, photo: firstMedia, caption: content }),
+          body: JSON.stringify({ chat_id: chatId, [tgField]: firstMedia, caption: content }),
         });
-        const photoData = await photoRes.json() as any;
+        const tgData = await tgRes.json() as any;
 
-        if (!photoData.ok) {
-          // Fallback: send as text with link
-          console.log("Photo failed, sending as text:", photoData.description);
+        if (!tgData.ok) {
+          // Fallback: send as text message
+          console.log(`${tgMethod} failed (${tgData.description}), sending as text`);
           const textRes = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chat_id: chatId, text: `${content}\n\n${firstMedia}`, parse_mode: "HTML" }),
+            body: JSON.stringify({ chat_id: chatId, text: content, parse_mode: "HTML" }),
           });
           const textData = await textRes.json() as any;
           if (!textData.ok) throw new Error(textData.description || "Telegram error");
           ok = true; message = `Telegram: отправлено (id: ${textData.result?.message_id})`;
         } else {
-          ok = true; message = `Telegram: фото отправлено (id: ${photoData.result?.message_id})`;
+          const mid = tgData.result?.message_id;
+          ok = true; message = `Telegram: ${isVideo ? "видео" : "фото"} отправлено (id: ${mid})`;
         }
       } else {
         const res  = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -155,13 +164,55 @@ if (!token || !groupId) throw new Error("VK token or group_id missing");
         createHash("md5").update(accessToken).digest("hex") + appSecret
       ).digest("hex");
 
-      // Build media with optional photo attachment
+      // Build media — OK.ru requires uploading photo first, URL in media block won't work
       let mediaContent: any[];
       if (firstMedia) {
-        mediaContent = [
-          { type: "photo", url: firstMedia },
-          { type: "text", text: content },
-        ];
+        // Step 1: upload photo to OK.ru storage
+        let photoId: string | null = null;
+        try {
+          // Get upload URL
+          const uploadParams: Record<string,string> = {
+            application_key: publicKey,
+            gid: groupId,
+            method: "photosV2.getUploadUrl",
+          };
+          const upSigStr = Object.keys(uploadParams).sort().map(k => `${k}=${uploadParams[k]}`).join("") + sessionSecret;
+          uploadParams.sig = createHash("md5").update(upSigStr).digest("hex");
+          uploadParams.access_token = accessToken;
+          uploadParams.format = "json";
+
+          const uploadUrlRes = await fetch("https://api.ok.ru/fb.do?" + new URLSearchParams(uploadParams))
+            .then(r => r.json()) as any;
+
+          if (uploadUrlRes.upload_url) {
+            // Download image
+            const imgBuf = await fetch(firstMedia).then(r => r.arrayBuffer());
+            const imgBytes = new Uint8Array(imgBuf);
+
+            const form = new FormData();
+            form.append("pic1", new Blob([imgBytes], { type: "image/jpeg" }), "photo.jpg");
+
+            const uploaded = await fetch(uploadUrlRes.upload_url, { method: "POST", body: form })
+              .then(r => r.json()) as any;
+
+            if (uploaded.photos) {
+              const firstKey = Object.keys(uploaded.photos)[0];
+              photoId = uploaded.photos[firstKey]?.token || null;
+            }
+          }
+        } catch (photoErr: any) {
+          console.log("OK photo upload failed:", photoErr.message);
+        }
+
+        if (photoId) {
+          mediaContent = [
+            { type: "photo", list: [{ id: photoId }] },
+            { type: "text", text: content },
+          ];
+        } else {
+          // Fallback: text only
+          mediaContent = [{ type: "text", text: content }];
+        }
       } else {
         mediaContent = [{ type: "text", text: content }];
       }
