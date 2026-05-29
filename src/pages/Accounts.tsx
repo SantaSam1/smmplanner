@@ -22,7 +22,7 @@ const PLATFORMS = [
 const MULTI_GROUP_PLATFORMS = ['telegram', 'vk', 'ok'];
 
 const OAUTH_URLS: Record<string, { authUrl: string; scopes: string[]; sep: string }> = {
-  ok:        { authUrl: 'https://connect.ok.ru/oauth/authorize', scopes: ['VALUABLE_ACCESS','GROUP_CONTENT','LONG_ACCESS_TOKEN'], sep: ';' },
+  ok: { authUrl: 'https://connect.ok.ru/oauth/authorize', scopes: ['VALUABLE_ACCESS','GROUP_CONTENT','LONG_ACCESS_TOKEN','PHOTO_CONTENT'], sep: ';' },
   instagram: { authUrl: 'https://www.facebook.com/v19.0/dialog/oauth', scopes: ['email','public_profile','pages_show_list','pages_read_engagement','instagram_basic','instagram_content_publish'], sep: ',' },
   facebook:  { authUrl: 'https://www.facebook.com/v19.0/dialog/oauth', scopes: ['email','public_profile','pages_show_list','pages_manage_posts','pages_read_engagement'], sep: ',' },
   twitter:   { authUrl: 'https://twitter.com/i/oauth2/authorize', scopes: ['tweet.write','tweet.read','users.read'], sep: ' ' },
