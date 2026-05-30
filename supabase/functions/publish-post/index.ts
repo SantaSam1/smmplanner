@@ -180,20 +180,20 @@ if (!token || !groupId) throw new Error("VK token or group_id missing");
       console.log("OK attachment:", attachment.slice(0, 300));
 
       // sig must include attachment (sorted with other params, BEFORE access_token/format)
-      const params: Record<string, string> = {
+      const okParams: Record<string, string> = {
         application_key: publicKey,
         attachment: attachment,
         gid: groupId,
         method: "mediatopic.post",
         type: "GROUP_THEME",
       };
-      const sigStr = Object.keys(params).sort().map(k => `${k}=${params[k]}`).join("") + sessionSecret;
-      params.sig = createHash("md5").update(sigStr).digest("hex");
-      params.access_token = accessToken;
-      params.format = "json";
+      const sigStr = Object.keys(okParams).sort().map(k => `${k}=${okParams[k]}`).join("") + sessionSecret;
+      okParams.sig = createHash("md5").update(sigStr).digest("hex");
+      okParams.access_token = accessToken;
+      okParams.format = "json";
 
       const okForm = new FormData();
-      for (const [k, v] of Object.entries(params)) okForm.append(k, v);
+      for (const [k, v] of Object.entries(okParams)) okForm.append(k, v);
 
       const okRes = await fetch("https://api.ok.ru/fb.do", {
         method: "POST",
