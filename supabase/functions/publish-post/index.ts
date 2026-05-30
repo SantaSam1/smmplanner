@@ -164,65 +164,38 @@ if (!token || !groupId) throw new Error("VK token or group_id missing");
         createHash("md5").update(accessToken).digest("hex") + appSecret
       ).digest("hex");
 
-      // Build media — OK.ru requires uploading photo first, URL in media block won't work
+      // Build media for OK.ru
+      // Use direct photo URL — works without PHOTO_CONTENT permission
+      // This matches how the original Python version worked
       let mediaContent: any[];
+
       if (firstMedia) {
-        // Step 1: upload photo to OK.ru storage
-        let photoId: string | null = null;
-        try {
-          // Get upload URL
-          const uploadParams: Record<string,string> = {
-            application_key: publicKey,
-            gid: groupId,
-            method: "photosV2.getUploadUrl",
-          };
-          const upSigStr = Object.keys(uploadParams).sort().map(k => `${k}=${uploadParams[k]}`).join("") + sessionSecret;
-          uploadParams.sig = createHash("md5").update(upSigStr).digest("hex");
-          uploadParams.access_token = accessToken;
-          uploadParams.format = "json";
-
-          const uploadUrlRes = await fetch("https://api.ok.ru/fb.do?" + new URLSearchParams(uploadParams))
-            .then(r => r.json()) as any;
-
-          if (uploadUrlRes.upload_url) {
-            // Download image
-            const imgBuf = await fetch(firstMedia).then(r => r.arrayBuffer());
-            const imgBytes = new Uint8Array(imgBuf);
-
-            const form = new FormData();
-            form.append("pic1", new Blob([imgBytes], { type: "image/jpeg" }), "photo.jpg");
-
-            const uploaded = await fetch(uploadUrlRes.upload_url, { method: "POST", body: form })
-              .then(r => r.json()) as any;
-
-            if (uploaded.photos) {
-              const firstKey = Object.keys(uploaded.photos)[0];
-              photoId = uploaded.photos[firstKey]?.token || null;
-            }
-          }
-        } catch (photoErr: any) {
-          console.log("OK photo upload failed:", photoErr.message);
-        }
-
-        if (photoId) {
+        const isVideo = /\.(mp4|mov|avi|mkv|webm|flv|m4v)(\?|$)/i.test(firstMedia);
+        if (isVideo) {
           mediaContent = [
-            { type: "photo", list: [{ id: photoId }] },
             { type: "text", text: content },
+            { type: "link", url: firstMedia },
           ];
         } else {
-          // Fallback: text only
-          mediaContent = [{ type: "text", text: content }];
+          // Photo via direct URL — OK.ru fetches it server-side, no PHOTO_CONTENT needed
+          mediaContent = [
+            { type: "photo", url: firstMedia },
+            { type: "text", text: content },
+          ];
         }
       } else {
         mediaContent = [{ type: "text", text: content }];
       }
 
-      const mediaJson = JSON.stringify({ media: mediaContent });
+      // Use "attachment" param — this is what OK API actually expects
+      const attachment = JSON.stringify({ media: mediaContent });
+
+      console.log("OK attachment:", attachment.slice(0, 200));
 
       const params: Record<string, string> = {
         application_key: publicKey,
         gid: groupId,
-        media: mediaJson,
+        attachment: attachment,
         method: "mediatopic.post",
         type: "GROUP_THEME",
       };
