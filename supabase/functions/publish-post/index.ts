@@ -164,38 +164,26 @@ if (!token || !groupId) throw new Error("VK token or group_id missing");
         createHash("md5").update(accessToken).digest("hex") + appSecret
       ).digest("hex");
 
-      // Build media for OK.ru
-      // Use direct photo URL — works without PHOTO_CONTENT permission
-      // This matches how the original Python version worked
-      let mediaContent: any[];
-
+      // Build attachment exactly like working Python version
+      const mediaArr: any[] = [];
       if (firstMedia) {
         const isVideo = /\.(mp4|mov|avi|mkv|webm|flv|m4v)(\?|$)/i.test(firstMedia);
         if (isVideo) {
-          mediaContent = [
-            { type: "text", text: content },
-            { type: "link", url: firstMedia },
-          ];
+          mediaArr.push({ type: "link", url: firstMedia });
         } else {
-          // Photo via direct URL — OK.ru fetches it server-side, no PHOTO_CONTENT needed
-          mediaContent = [
-            { type: "photo", url: firstMedia },
-            { type: "text", text: content },
-          ];
+          mediaArr.push({ type: "photo", url: firstMedia });
         }
-      } else {
-        mediaContent = [{ type: "text", text: content }];
       }
+      mediaArr.push({ type: "text", text: content });
 
-      // Use "attachment" param — this is what OK API actually expects
-      const attachment = JSON.stringify({ media: mediaContent });
+      const attachment = JSON.stringify({ media: mediaArr });
+      console.log("OK attachment:", attachment.slice(0, 300));
 
-      console.log("OK attachment:", attachment.slice(0, 200));
-
+      // sig must include attachment (sorted with other params, BEFORE access_token/format)
       const params: Record<string, string> = {
         application_key: publicKey,
-        gid: groupId,
         attachment: attachment,
+        gid: groupId,
         method: "mediatopic.post",
         type: "GROUP_THEME",
       };
