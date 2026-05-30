@@ -192,9 +192,12 @@ if (!token || !groupId) throw new Error("VK token or group_id missing");
       params.access_token = accessToken;
       params.format = "json";
 
+      const okForm = new FormData();
+      for (const [k, v] of Object.entries(params)) okForm.append(k, v);
+
       const okRes = await fetch("https://api.ok.ru/fb.do", {
         method: "POST",
-        body: new URLSearchParams(params),
+        body: okForm,
       }).then(r => r.json()) as any;
 
       if (okRes.error_code) throw new Error(`OK ${okRes.error_code}: ${okRes.error_msg || JSON.stringify(okRes)}`);
