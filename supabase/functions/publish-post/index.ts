@@ -109,6 +109,7 @@ if (!token || !groupId) throw new Error("VK token or group_id missing");
       if (firstMedia) {
         try {
           const serverRes = await fetch(`https://api.vk.com/method/photos.getWallUploadServer?group_id=${gId}&access_token=${token}&v=5.199`).then(r => r.json()) as any;
+          console.log("VK serverRes:", JSON.stringify(serverRes).slice(0, 300));
           if (serverRes.response?.upload_url) {
             // Download image first
             const imgRes = await fetch(firstMedia);
@@ -130,8 +131,8 @@ if (!token || !groupId) throw new Error("VK token or group_id missing");
               }
             }
           }
-        } catch (photoErr) {
-          console.log("VK photo upload failed, posting text only:", photoErr);
+        } catch (photoErr: any) {
+          console.log("VK photo upload failed:", photoErr.message || String(photoErr));
         }
       }
 
@@ -164,40 +165,41 @@ if (!token || !groupId) throw new Error("VK token or group_id missing");
         createHash("md5").update(accessToken).digest("hex") + appSecret
       ).digest("hex");
 
-      // Build attachment exactly like working Python version
+      // Build attachment — use direct photo URL (no PHOTO_CONTENT permission needed)
+      // Exactly matches working Python rss_reposter/posters/ok.py
       const mediaArr: any[] = [];
       if (firstMedia) {
-        const isVideo = /\.(mp4|mov|avi|mkv|webm|flv|m4v)(\?|$)/i.test(firstMedia);
-        if (isVideo) {
-          mediaArr.push({ type: "link", url: firstMedia });
-        } else {
-          mediaArr.push({ type: "photo", url: firstMedia });
-        }
+        const isVid = /\.(mp4|mov|avi|mkv|webm|flv|m4v)(\?|$)/i.test(firstMedia);
+        mediaArr.push(isVid ? { type: "link", url: firstMedia } : { type: "photo", url: firstMedia });
       }
       mediaArr.push({ type: "text", text: content });
 
       const attachment = JSON.stringify({ media: mediaArr });
-      console.log("OK attachment:", attachment.slice(0, 300));
+      console.log("OK attachment:", attachment.slice(0, 200));
 
-      // sig must include attachment (sorted with other params, BEFORE access_token/format)
-      const okParams: Record<string, string> = {
+      // Include attachment in sig calculation (sorted alphabetically with other params)
+      const okSigParams: Record<string, string> = {
         application_key: publicKey,
-        attachment: attachment,
+        attachment,
         gid: groupId,
         method: "mediatopic.post",
         type: "GROUP_THEME",
       };
-      const sigStr = Object.keys(okParams).sort().map(k => `${k}=${okParams[k]}`).join("") + sessionSecret;
-      okParams.sig = createHash("md5").update(sigStr).digest("hex");
-      okParams.access_token = accessToken;
-      okParams.format = "json";
+      const sigStr = Object.keys(okSigParams).sort().map(k => `${k}=${okSigParams[k]}`).join("") + sessionSecret;
+      const sig = createHash("md5").update(sigStr).digest("hex");
 
-      const okForm = new FormData();
-      for (const [k, v] of Object.entries(okParams)) okForm.append(k, v);
+      // Build body manually — URLSearchParams and FormData both break "method" field
+      const okBodyParts = [
+        ...Object.entries(okSigParams).map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`),
+        `sig=${sig}`,
+        `access_token=${encodeURIComponent(accessToken)}`,
+        `format=json`,
+      ];
 
       const okRes = await fetch("https://api.ok.ru/fb.do", {
         method: "POST",
-        body: okForm,
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: okBodyParts.join("&"),
       }).then(r => r.json()) as any;
 
       if (okRes.error_code) throw new Error(`OK ${okRes.error_code}: ${okRes.error_msg || JSON.stringify(okRes)}`);
