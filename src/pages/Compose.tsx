@@ -164,7 +164,7 @@ export default function Compose({ onNavigate }: ComposeProps) {
           headers: { 'Authorization': `Bearer ${session!.access_token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             postId: newPost.id, accountId, platform: acc.platform,
-            content, mediaUrls: allMedia, videoUrl: videoUrl || undefined,
+            content, mediaUrls: allMedia.map(toDirectUrl), videoUrl: videoUrl || undefined,
           }),
         });
         const result = await resp.json();
@@ -357,10 +357,10 @@ export default function Compose({ onNavigate }: ComposeProps) {
                       className="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                   </div>
                 </div>
-                <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
-                  ⏰ {ru
-                    ? 'Автоматическая публикация запланированных постов требует отдельного cron-сервиса. Пока посты сохраняются со статусом "Запланирован" и публикуются вручную.'
-                    : 'Auto-publishing scheduled posts requires a separate cron service. Posts are saved as "Scheduled" and published manually for now.'}
+                <div className="mt-3 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-xs text-green-700">
+                  ✅ {ru
+                    ? 'Автопубликация настроена — пост выйдет в указанное время.'
+                    : 'Auto-publishing is set up — post will go live at the scheduled time.'}
                 </div>
               </>
             )}

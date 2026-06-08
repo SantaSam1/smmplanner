@@ -11,11 +11,19 @@ import Posts from './pages/Posts';
 import Analytics from './pages/Analytics';
 import Accounts from './pages/Accounts';
 import Media from './pages/Media';
+import RssFeeds from './pages/RssFeeds';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import TermsOfService from './pages/TermsOfService';
 import { Page } from './types';
 
 function AppContent() {
   const { user, loading } = useAuth();
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
+
+  // Static pages - no auth required
+  const path = window.location.pathname;
+  if (path === '/privacy-policy') return <PrivacyPolicy />;
+  if (path === '/terms-of-service') return <TermsOfService />;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   if (loading) return (
@@ -23,6 +31,11 @@ function AppContent() {
       <div className="w-10 h-10 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
     </div>
   );
+
+  // Save VK token from URL hash before redirecting to login
+  if (window.location.hash.includes('access_token')) {
+    sessionStorage.setItem('vk_pending_token', window.location.hash);
+  }
 
   if (!user) return <AuthPage />;
 
@@ -35,6 +48,7 @@ function AppContent() {
       case 'analytics':  return <Analytics />;
       case 'accounts':   return <Accounts />;
       case 'media':      return <Media />;
+      case 'rss':        return <RssFeeds />;
     }
   }
 
