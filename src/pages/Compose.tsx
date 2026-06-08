@@ -53,6 +53,7 @@ export default function Compose({ onNavigate }: ComposeProps) {
   const [showResults, setShowResults] = useState(false);
 
   const charLimit = selectedPlatforms.includes('twitter') ? 280 : selectedPlatforms.includes('telegram') ? 4096 : 2200;
+  const [aiPrompt, setAiPrompt] = useState('');
 
 
   useEffect(() => {
@@ -74,9 +75,41 @@ export default function Compose({ onNavigate }: ComposeProps) {
     setSelectedAccountIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   }
 
-  function generateCaption() {
-    setAiLoading(true);
-    setTimeout(() => { setContent(c.captions[Math.floor(Math.random() * c.captions.length)]); setAiLoading(false); }, 800);
+  async function generateCaption() {
+    try {
+      setAiLoading(true);
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+
+      // Формируем гибкий промпт: если тема пустая, используем дефолтный шаблон
+      const finalPrompt = aiPrompt.trim() 
+        ? `Напиши продающий пост для социальных сетей на тему: ${aiPrompt}`
+        : "Напиши продающий пост для социальных сетей на русском языке";
+
+      const res = await fetch(
+        `${supabaseUrl}/functions/v1/generate-ai-post`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session?.access_token}`,
+          },
+          body: JSON.stringify({
+            prompt: finalPrompt,
+          }),
+        }
+      );
+
+      const data = await res.json();
+
+      if (data.text) {
+        setContent(data.text);
+      }
+    } catch (err) {
+      console.error(err);
+    } file {
+      setAiLoading(false);
+    }
   }
 
   function addFromUrl() {
@@ -215,6 +248,7 @@ export default function Compose({ onNavigate }: ComposeProps) {
               </p>
             )}
           </div>
+		  
 
           {/* Account selector */}
           {accounts.length > 0 && selectedPlatforms.length > 0 && (
@@ -242,6 +276,14 @@ export default function Compose({ onNavigate }: ComposeProps) {
 
           {/* Content */}
           <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <input
+              type="text"
+              value={aiPrompt}
+              onChange={(e) => setAiPrompt(e.target.value)}
+              placeholder="Например: Продвижение автосервиса"
+              className="w-full mb-3 px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-gray-700">{c.postContent}</h3>
               <button onClick={generateCaption} disabled={aiLoading}
