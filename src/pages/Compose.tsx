@@ -107,7 +107,7 @@ export default function Compose({ onNavigate }: ComposeProps) {
       }
     } catch (err) {
       console.error(err);
-    } file {
+    } finally {
       setAiLoading(false);
     }
   }
