@@ -1,4 +1,4 @@
-import { LayoutDashboard, Calendar, Edit3, FileText, BarChart2, Users, Image, LogOut, ChevronRight } from 'lucide-react';
+import { LayoutDashboard, Calendar, Edit3, FileText, BarChart2, Users, Image, Rss, LogOut, ChevronRight } from 'lucide-react';
 import { Page } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -15,6 +15,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed }: { curren
     { id: 'analytics' as Page, label: t.nav.analytics, icon: BarChart2 },
     { id: 'accounts'  as Page, label: t.nav.accounts,  icon: Users },
     { id: 'media'     as Page, label: t.nav.media,     icon: Image },
+    { id: 'rss'      as Page, label: 'RSS',              icon: Rss },
   ];
 
   return (
@@ -45,7 +46,14 @@ export default function Sidebar({ currentPage, onNavigate, collapsed }: { curren
           <button className="mt-2 w-full py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-md transition-colors">{t.common.upgrade}</button>
         </div>
       )}
-      <div className={`border-t border-gray-200 p-3 flex items-center gap-3 ${collapsed ? 'justify-center' : ''}`}>
+      {!collapsed && (
+    <div className="px-3 pb-2 flex items-center gap-3 text-xs text-gray-400">
+      <a href="/privacy-policy" className="hover:text-gray-600 hover:underline">Политика</a>
+      <span>·</span>
+      <a href="/terms-of-service" className="hover:text-gray-600 hover:underline">Соглашение</a>
+    </div>
+  )}
+  <div className={`border-t border-gray-200 p-3 flex items-center gap-3 ${collapsed ? 'justify-center' : ''}`}>
         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center flex-shrink-0">
           <span className="text-white text-sm font-semibold">{profile?.full_name?.[0]?.toUpperCase() ?? 'U'}</span>
         </div>

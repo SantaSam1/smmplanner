@@ -112,6 +112,11 @@ export default function AuthPage() {
                 {mode==='signin'?a.signUpFree:a.signIn}
               </button>
             </p>
+            <div className="mt-6 pt-4 border-t border-gray-100 flex items-center justify-center gap-4 text-xs text-gray-400">
+              <a href="/privacy-policy" className="hover:text-gray-600 hover:underline">Политика конфиденциальности</a>
+              <span>·</span>
+              <a href="/terms-of-service" className="hover:text-gray-600 hover:underline">Пользовательское соглашение</a>
+            </div>
           </div>
         </div>
       </div>
